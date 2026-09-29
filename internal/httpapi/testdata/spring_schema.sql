@@ -4,12 +4,16 @@ CREATE TABLE "user" (
  id SERIAL PRIMARY KEY, email TEXT NOT NULL UNIQUE, "passwordHash" TEXT NOT NULL,
  role TEXT NOT NULL, "createdAt" TIMESTAMPTZ DEFAULT now(), "updatedAt" TIMESTAMPTZ DEFAULT now()
 );
-CREATE TABLE department (id SERIAL PRIMARY KEY, name TEXT NOT NULL);
+CREATE TABLE department (
+ id SERIAL PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT,
+ "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now(), "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE employee (
  id SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL UNIQUE REFERENCES "user"(id),
  "employeeNumber" TEXT NOT NULL UNIQUE, "firstName" TEXT NOT NULL, "lastName" TEXT,
- "departmentId" INTEGER REFERENCES department(id), position TEXT,
- "isActive" BOOLEAN NOT NULL DEFAULT true
+ email TEXT, phone TEXT, "photoUrl" TEXT, "departmentId" INTEGER REFERENCES department(id), position TEXT, "joinDate" DATE,
+ "isActive" BOOLEAN NOT NULL DEFAULT true,
+ "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now(), "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE "attendanceRecord" (
  id SERIAL PRIMARY KEY, "employeeId" INTEGER NOT NULL REFERENCES employee(id),

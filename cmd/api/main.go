@@ -15,6 +15,7 @@ import (
 	"github.com/ddiandrab/employee-attendance-be-golang/internal/config"
 	"github.com/ddiandrab/employee-attendance-be-golang/internal/database"
 	"github.com/ddiandrab/employee-attendance-be-golang/internal/httpapi"
+	"github.com/ddiandrab/employee-attendance-be-golang/internal/management"
 )
 
 func main() {
@@ -42,6 +43,7 @@ func run() error {
 		Attendance: attendance.NewService(&attendance.Postgres{Pool: pool}, time.Now),
 		Auth:       auth.New(&auth.Postgres{Pool: pool}, cfg.JWTSecret),
 		Logger:     slog.Default(), AllowedOrigin: cfg.AllowedOrigin,
+		Management: management.New(pool),
 	}
 	server := &http.Server{Addr: cfg.Address, Handler: api.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	done := make(chan error, 1)

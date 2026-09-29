@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
@@ -39,6 +40,14 @@ type Authenticator struct {
 
 func New(users UserRepository, secret string) *Authenticator {
 	return &Authenticator{users: users, secret: []byte(secret)}
+}
+
+// Token issues the same HS256 token shape as Spring's JwtService.
+func (a *Authenticator) Token(user User) (string, error) {
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": user.Email, "role": user.Role,
+		"iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix(),
+	}).SignedString(a.secret)
 }
 
 // Authenticate accepts Spring's email subject and HMAC signing algorithms.

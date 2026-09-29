@@ -1,13 +1,13 @@
 # Employee Attendance — Go
 
-Implementasi **Modul A (Attendance)** dari [Spring issue #3](https://github.com/ddiandrab/employee-attendance-be-spring/issues/3), memakai database PostgreSQL dan token login Spring yang sudah ada. Modul notification, audit log, dan Kafka belum diimplementasikan pada tahap ini.
+Implementasi Attendance, auth, user, employee, dan department yang memakai database PostgreSQL yang sama dengan Spring. Modul notification, audit log, dan Kafka belum diimplementasikan.
 
 ## Menjalankan
 
 Prasyarat: Go 1.27.1+, PostgreSQL dengan skema Spring/NestJS yang sudah tersedia, serta akun dan profil employee yang dibuat melalui Spring.
 
 1. Salin `.env.example` ke `.env`. Isi `DATABASE_URL` dan `JWT_SECRET` sesuai konfigurasi Spring. Secret harus sama persis, minimal 32 byte, tanpa decoding base64. Jika Spring memakai nilai default konfigurasi lokal, salin nilai tersebut secara eksplisit ke `.env`.
-2. Jalankan layanan Spring untuk login dan pengelolaan employee. Go tidak menjalankan migrasi atau membuat akun.
+2. Go menjalankan API login, user, employee, department, dan attendance. Go tidak menjalankan migrasi; database tetap dimiliki Spring.
 3. Ekspor konfigurasi dan jalankan Go:
 
 ```sh
@@ -19,7 +19,7 @@ go run ./cmd/api
 
 Go mendengarkan pada `:8081` agar tidak bentrok dengan Spring `:8080`. `.env` tidak dimuat otomatis dan tidak boleh di-commit. Gunakan koneksi PostgreSQL dengan TLS sesuai lingkungan deployment.
 
-Login melalui `POST http://localhost:8080/auth/login` dengan body `{"email":"...","password":"..."}`. Gunakan `accessToken` yang dikembalikan untuk request Go:
+Login melalui `POST http://localhost:8081/auth/login` dengan body `{"email":"...","password":"..."}`. Gunakan `accessToken` yang dikembalikan untuk request Go:
 
 ```sh
 export TOKEN='<accessToken dari Spring>'
@@ -30,7 +30,7 @@ curl 'http://localhost:8081/attendance/me?from=2026-09-01&to=2026-09-30' -H "Aut
 curl 'http://localhost:8081/attendance?from=2026-09-01&to=2026-09-30' -H "Authorization: Bearer $TOKEN"
 ```
 
-Arahkan hanya `/attendance` dan `/attendance/*` dari frontend/proxy ke Go. Auth, employee, department, dan endpoint lain tetap menuju Spring. CORS default mengizinkan `http://localhost:5173`; ubah `CORS_ALLOWED_ORIGIN` bila perlu.
+Arahkan route Go ke port `8081`. CORS default mengizinkan `http://localhost:5173`; ubah `CORS_ALLOWED_ORIGIN` bila perlu.
 
 ## API dan perilaku
 
@@ -40,6 +40,15 @@ Arahkan hanya `/attendance` dan `/attendance/*` dari frontend/proxy ke Go. Auth,
 | POST | `/attendance/check-out` | EMPLOYEE, HR, ADMIN | 200, record yang diperbarui |
 | GET | `/attendance/me` | EMPLOYEE, HR, ADMIN | 200, array record milik user login |
 | GET | `/attendance` | HR, ADMIN | 200, array ringkasan seluruh employee |
+| POST | `/auth/login` | Publik | 200, access token |
+| GET | `/auth/me` | Semua user login | 200, informasi user |
+| GET, POST | `/users` | ADMIN | 200/201, daftar atau user baru |
+| GET, PATCH, DELETE | `/users/{id}` | ADMIN | 200/204 |
+| GET, POST | `/employees` | ADMIN, HR | 200/201, daftar atau employee baru |
+| GET, PATCH, DELETE | `/employees/{id}` | ADMIN, HR | 200/204 |
+| GET, PATCH | `/employees/me` | Semua user login | 200, profil sendiri |
+| GET | `/departments`, `/departments/{id}` | Semua user login | 200 |
+| POST, PATCH, DELETE | `/departments`, `/departments/{id}` | ADMIN | 201/200/204 |
 
 - Check-in/check-out tidak memerlukan body. Identitas selalu berasal dari JWT `sub` (email), lalu relasi `user` → `employee`; ID dari klien tidak digunakan.
 - JWT HMAC HS256/HS384/HS512 diverifikasi dengan ukuran key minimum masing-masing algoritma, signature, expiry wajib, serta `nbf`/`iat` jika ada. Role dibaca ulang dari database setiap request; claim role tidak digunakan untuk otorisasi.
@@ -48,6 +57,8 @@ Arahkan hanya `/attendance` dan `/attendance/*` dari frontend/proxy ke Go. Auth,
 - Check-in ganda, check-out tanpa check-in hari ini, atau check-out ganda menghasilkan 400. Unique constraint dan conditional UPDATE menjaga request Go bersamaan. Check-out tidak menyelesaikan record hari sebelumnya. Bila jam server mundur, waktu check-out dibatasi agar tidak lebih awal dari check-in.
 - Profil employee tidak ditemukan: 404. JWT hilang/tidak valid/expired atau user sudah dihapus: 401. Role tidak diizinkan: 403. Metode salah: 405. Kegagalan internal: 500 dengan pesan generik.
 - HR/ADMIN dapat membaca seluruh presensi tanpa profil employee; untuk presensi diri sendiri harus memiliki profil, sama seperti Spring.
+- Password disimpan sebagai Argon2id yang kompatibel dengan Spring. JWT memakai secret yang sama; perubahan role dibaca langsung dari database saat setiap request.
+- Penghapusan user, employee, atau department yang masih direferensikan menghasilkan `409 Conflict`.
 
 Record `/attendance/me`, check-in, dan check-out:
 

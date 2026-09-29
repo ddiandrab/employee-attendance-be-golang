@@ -1,6 +1,7 @@
 package httpapi_test
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -19,6 +20,7 @@ import (
 	"github.com/ddiandrab/employee-attendance-be-golang/internal/auth"
 	"github.com/ddiandrab/employee-attendance-be-golang/internal/database"
 	"github.com/ddiandrab/employee-attendance-be-golang/internal/httpapi"
+	"github.com/ddiandrab/employee-attendance-be-golang/internal/management"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -269,4 +271,96 @@ func TestConcurrentAttendanceIntegration(t *testing.T) {
 	if _, err = repo.CheckOut(context.Background(), 2, "2026-09-28", now); err != attendance.ErrNotCheckedIn {
 		t.Fatal(err)
 	}
+}
+
+func TestAuthUserEmployeeDepartmentAPIIntegration(t *testing.T) {
+	pool := testDB(t)
+	api := &httpapi.API{Attendance: attendance.NewService(&attendance.Postgres{Pool: pool}, time.Now), Auth: auth.New(&auth.Postgres{Pool: pool}, testSecret), Management: management.New(pool), Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), AllowedOrigin: "http://localhost:5173"}
+	handler := api.Handler()
+	admin := token(t, "admin@example.com")
+	hr := token(t, "hr@example.com")
+	employee := token(t, "employee@example.com")
+	call := func(method, path, bearer, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, bytes.NewBufferString(body))
+		if bearer != "" {
+			r.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		if body != "" {
+			r.Header.Set("Content-Type", "application/json")
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+
+	// Only administrators manage users; credential data never appears in responses.
+	expect(t, call("POST", "/users", hr, `{"email":"new@example.com","password":"TestPassword123!","role":"HR"}`), 403)
+	createdUser := call("POST", "/users", admin, `{"email":"new@example.com","password":"TestPassword123!","role":"HR"}`)
+	expect(t, createdUser, 201)
+	if strings.Contains(createdUser.Body.String(), "password") {
+		t.Fatal("password leaked")
+	}
+	var user management.User
+	if err := json.Unmarshal(createdUser.Body.Bytes(), &user); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, call("POST", "/users", admin, `{"email":"new@example.com","password":"TestPassword123!","role":"HR"}`), 409)
+	expect(t, call("PATCH", fmt.Sprintf("/users/%d", user.ID), admin, `{"email":"renamed@example.com"}`), 200)
+
+	// Login issues a Go JWT accepted by /auth/me, then a role change immediately takes effect.
+	login := call("POST", "/auth/login", "", `{"email":"renamed@example.com","password":"TestPassword123!"}`)
+	expect(t, login, 200)
+	var loginBody struct {
+		AccessToken string `json:"accessToken"`
+		TokenType   string `json:"tokenType"`
+	}
+	if err := json.Unmarshal(login.Body.Bytes(), &loginBody); err != nil {
+		t.Fatal(err)
+	}
+	if loginBody.AccessToken == "" || loginBody.TokenType != "Bearer" {
+		t.Fatal(login.Body.String())
+	}
+	me := call("GET", "/auth/me", loginBody.AccessToken, "")
+	expect(t, me, 200)
+	if !strings.Contains(me.Body.String(), "renamed@example.com") {
+		t.Fatal(me.Body.String())
+	}
+	expect(t, call("POST", "/auth/login", "", `{"email":"renamed@example.com","password":"wrong-password"}`), 401)
+
+	// Department CRUD and relation-safe delete.
+	department := call("POST", "/departments", admin, `{"name":"People","description":"People team"}`)
+	expect(t, department, 201)
+	var dept management.Department
+	if err := json.Unmarshal(department.Body.Bytes(), &dept); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, call("GET", "/departments", employee, ""), 200)
+	expect(t, call("PATCH", fmt.Sprintf("/departments/%d", dept.ID), hr, `{"name":"No"}`), 403)
+
+	// HR creates and changes employees, but cannot assign roles through that API.
+	createdEmployee := call("POST", "/employees", hr, `{"employeeNumber":"NEW001","firstName":"New","lastName":"Person","email":"person@example.com","password":"TestPassword123!","departmentId":2,"position":"Developer","joinDate":"2026-09-29"}`)
+	expect(t, createdEmployee, 201)
+	var emp management.Employee
+	if err := json.Unmarshal(createdEmployee.Body.Bytes(), &emp); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, call("GET", "/employees", employee, ""), 403)
+	updated := call("PATCH", fmt.Sprintf("/employees/%d", emp.ID), hr, `{"email":"person.renamed@example.com","isActive":false}`)
+	expect(t, updated, 200)
+	if !strings.Contains(updated.Body.String(), "person.renamed@example.com") {
+		t.Fatal(updated.Body.String())
+	}
+	personLogin := call("POST", "/auth/login", "", `{"email":"person.renamed@example.com","password":"TestPassword123!"}`)
+	expect(t, personLogin, 200)
+	var personToken struct {
+		AccessToken string `json:"accessToken"`
+	}
+	_ = json.Unmarshal(personLogin.Body.Bytes(), &personToken)
+	expect(t, call("PATCH", "/employees/me", personToken.AccessToken, `{"phone":"08123","photoUrl":"https://example.com/p.png"}`), 200)
+	expect(t, call("DELETE", fmt.Sprintf("/departments/%d", dept.ID), admin, ""), 409)
+	expect(t, call("DELETE", fmt.Sprintf("/users/%d", emp.UserID), admin, ""), 409)
+
+	// Reject malformed input and unknown JSON fields.
+	expect(t, call("POST", "/employees", admin, `{"employeeNumber":"","firstName":"","email":"bad","password":"short"}`), 400)
+	expect(t, call("POST", "/users", admin, `{"email":"unknown@example.com","password":"TestPassword123!","role":"EMPLOYEE","unknown":true}`), 400)
 }

@@ -1,0 +1,9 @@
+{
+  "info": { "name": "Employee Attendance Go", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+  "variable": [{ "key": "baseUrl", "value": "http://localhost:8081" }, { "key": "accessToken", "value": "" }],
+  "item": [
+    { "name": "Login", "request": { "method": "POST", "header": [{"key":"Content-Type","value":"application/json"}], "body": {"mode":"raw","raw":"{\n  \"email\": \"employee.test@example.com\",\n  \"password\": \"TestPassword123!\"\n}"}, "url": "{{baseUrl}}/auth/login" }, "event": [{"listen":"test","script":{"exec":["const body = pm.response.json();","pm.expect(pm.response.code).to.eql(200);","pm.environment.set('accessToken', body.accessToken);"]}}] },
+    { "name": "Current user", "request": { "method": "GET", "header": [{"key":"Authorization","value":"Bearer {{accessToken}}"}], "url": "{{baseUrl}}/auth/me" } },
+    { "name": "Check in", "request": { "method": "POST", "header": [{"key":"Authorization","value":"Bearer {{accessToken}}"}], "url": "{{baseUrl}}/attendance/check-in" } }
+  ]
+}
